@@ -1,0 +1,84 @@
+<style type="text/css" media="screen">
+  .label {
+    vertical-align: top;
+    text-align: right;
+    padding-right: 20px;
+  }
+
+  input {
+    width: 600px;
+  }
+
+  #review-description {
+    width: 600px;
+    height: 200px;
+  }
+
+  #review-branch,
+  #review-server {
+    width: 200px;
+  }
+
+</style>
+<script type="text/javascript" charset="utf-8">
+  function postReview() {
+    params = Form.serialize($('post-review-form'), {hash:true});
+    params["controller"] = "review_board";
+    params["action"] = "post_review";
+
+    $('debug').update(dispatch(params));
+  }
+</script>
+<div id="reviewboard">
+  <h2>Review Request:</h2>
+  <form id="post-review-form" onsubmit="return false;">
+    <fieldset id="post-review">
+      <table>
+        <tbody>
+          <tr>
+            <td class="label"><label for="review-summary">Summary:</label></td>
+            <td><input type="text" id="review-summary" name="summary" value="<%= htmlize(@summary) %>" /></td>
+          </tr>
+
+          <tr>
+            <td class="label"><label for="review-description">Description:</label></td>
+            <td><textarea id="review-description" name="description" rows="60" cols="80"><%= @description %></textarea></td>
+          </tr>
+
+          <tr>
+            <td class="label"><label for="review-groups">Groups:</label></td>
+            <td><input type="text" name="groups" id="review-groups" /></td>
+          </tr>
+
+          <tr>
+            <td class="label"><label for="review-people">People:</label></td>
+            <td><input type="text" name="people" id="review-people" /></td>
+          </tr>
+
+          <tr>
+            <td class="label"><label for="review-branch">Branch:</label></td>
+            <td><input type="text" id="review-branch" name="branch" value="<%= htmlize(git.branch.current.name) %>"></td>
+          </tr>
+
+          <tr>
+            <td class="label"><label for="review-server">Reviewboard Server:</label></td>
+            <td><input type="text" id="review-server" name="server" value="<%= htmlize(@server) %>"></td>
+          </tr>
+
+          <tr>
+            <td class="label"><label for="review-option-open_browser">Open Browser after post?</label></td>
+            <td><input type="checkbox" id="review-option-open_browser" name="open_browser" checked="checked" /></td>
+          </tr>
+
+          <tr>
+            <td colspan="2"><button type="submit" name="submit" onclick="postReview();">Post Review</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </fieldset>
+  </form>
+
+  <h2>Patch to submit:</h2>
+  <a style='float:right' href='txmt://open?url=file://<%= e_url '/tmp/output.diff' %>'>Open diff in TextMate</a>
+  <% render_component(:controller => "diff", :action => "diff", :revisions => ["master", git.branch.current.name]) %>
+</div>
