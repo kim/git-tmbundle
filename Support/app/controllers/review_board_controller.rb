@@ -6,31 +6,48 @@ class ReviewBoardController < ApplicationController
 
     commits_against_upstream = git.command("log", "--abbrev-commit", "--pretty=oneline", "#{upstream}..#{current_branch}").split("\n")
 
-    @summary = unless commits_against_upstream.size > 1
+    defaults = {}
+    defaults[:summary] = unless commits_against_upstream.size > 1
       commits_against_upstream.first
     else
       "Changes in #{current_branch} against #{upstream}"
     end
-    @description = "Combined diff of the following commits:\n\n" + commits_against_upstream.join("\n") if commits_against_upstream.size > 1
-    @server = git.command("config", "--get", "reviewboard.url")
+    defaults[:description] = "Combined diff of the following commits:\n\n" + commits_against_upstream.join("\n") if commits_against_upstream.size > 1
+    defaults[:server] = git.command("config", "--get", "reviewboard.url")
+    defaults[:branch] = current_branch
+    defaults[:parent] = upstream
+    defaults[:open_browser] = true
 
-    render "post_review"
+    puts "posting review...<br />"
+    flush
+    do_post_review(defaults)
   end
 
   def post_review
-    cmd = ["cd #{e_sh git.path} &&"]
-    cmd << File.expand_path(File.join(e_sh(ROOT), '/bin/post-review'))
-    cmd << e_sh("--summary='#{params[:summary]}'")
-    cmd << e_sh("--description='#{params[:description]}'")
-    cmd << e_sh("--branch='#{params[:branch]}'")
-    cmd << e_sh("--target-groups='#{params[:groups]}'") if params[:groups]
-    cmd << e_sh("--target-people='#{params[:people]}'") if params[:people]
-    cmd << e_sh("--server='#{params[:server]}'") if params[:server]
-    cmd << "--open" if params[:open_browser]
-
-    cmd = cmd.join(" ")
-    TextMate::Process.run(cmd) do |out|
-      puts out
-    end
+    do_post_review(params)
   end
+
+  protected
+
+    def do_post_review(options = {})
+      cmd = ["cd #{e_sh git.path} &&"]
+      cmd << File.expand_path(File.join(e_sh(ROOT), '/bin/post-review'))
+      cmd << "--summary=\"#{escape_quotes options[:summary]}\""
+      cmd << "--description=\"#{escape_quotes options[:description]}\""
+      cmd << "--branch=#{options[:branch]}"
+      cmd << "--parent=#{options[:parent]}" if options[:parent]
+      cmd << "--target-groups=#{options[:groups]}" if options[:groups]
+      cmd << "--target-people=#{options[:people]}" if options[:people]
+      cmd << "--server=\"#{options[:server]}\"" if options[:server] and not options[:server].empty?
+      cmd << "--open" if options[:open_browser]
+
+      cmd = cmd.join(" ")
+      TextMate::Process.run(cmd) do |out|
+        puts out
+      end
+    end
+
+    def escape_quotes(str)
+      str.gsub("\"", "\\\"")
+    end
 end
