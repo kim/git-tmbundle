@@ -1,6 +1,5 @@
 require 'rubygems'
-require 'net/http'
-require 'uri'
+require 'curb'
 require 'activesupport'
 require ENV['TM_SUPPORT_PATH'] + "/lib/ui"
 
@@ -63,7 +62,19 @@ class ReviewBoardController < ApplicationController
       api_post("api/json/reviewrequests/%s/diff/new/" % review_request, )
     end
 
-    def api_post(path, data, headers = {})
+    def api_post(path, params, files, headers = {})
+      c = Curl::Easy.new("#{@reviewboard_url.host}:#{@reviewboard_url.port}")
+      c.multipart_form_post = true
+
+      params = params.map do |name, value|
+        Curl::PostField.content name, value
+      end
+      params += files.map do |filename, filedata|
+        Curl::PostField.file
+      end
+      c.http_post(
+        Curl::Post
+      )
       response = Net::HTTP.start(@reviewboard_url.host, @reviewboard_url.port) do |http|
         headers["Cookie"] = @cookie if @cookie
         req = Net::HTTP::Post.new(path, headers)
