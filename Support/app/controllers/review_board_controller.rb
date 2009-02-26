@@ -1,53 +1,76 @@
+require 'rubygems'
+require 'net/http'
+require 'uri'
+require 'activesupport'
+require ENV['TM_SUPPORT_PATH'] + "/lib/ui"
+
 class ReviewBoardController < ApplicationController
 
   def index
     upstream = "master" # TODO: what if upstream is a different branch?
     current_branch = git.branch.current.name
 
-    commits_against_upstream = git.command("log", "--abbrev-commit", "--pretty=oneline", "#{upstream}..#{current_branch}").split("\n")
-
-    defaults = {}
-    defaults[:summary] = unless commits_against_upstream.size > 1
-      commits_against_upstream.first
-    else
-      "Changes in #{current_branch} against #{upstream}"
+    begin
+      @reviewboard_url = URI.parse git.command("config", "--get", "reviewboard.url").strip
+    rescue URI::InvalidURIError
+      puts "<p>No reviewboad URL found, please use git config --add reviewboard.url &lt;URL&gt;</p>"
+      return
     end
-    defaults[:description] = "Combined diff of the following commits:\n\n" + commits_against_upstream.join("\n") if commits_against_upstream.size > 1
-    defaults[:server] = git.command("config", "--get", "reviewboard.url")
-    defaults[:branch] = current_branch
-    defaults[:parent] = upstream
-    defaults[:open_browser] = true
 
-    puts "posting review...<br />"
-    flush
-    do_post_review(defaults)
-  end
+    puts "<p>reviewboard url: #{@reviewboard_url}</p>"
 
-  def post_review
-    do_post_review(params)
-  end
+    opts = {}
+    opts[:repository_id] = git.command("config", "--get", "reviewboard.repository_id").strip
+    if opts[:repository_id].empty?
+      opts[:repository_path] = git.command("config", "--get", "reviewboard.repository_path")
+      opts[:repository_path] = git.command("remote", "show", "-n","origin").scan(/\s+URL: (.*)$/).flatten.first if opts[:repository_path].empty?
+      opts[:repository_path].strip
 
-  protected
-
-    def do_post_review(options = {})
-      cmd = ["cd #{e_sh git.path} &&"]
-      cmd << File.expand_path(File.join(e_sh(ROOT), '/bin/post-review'))
-      cmd << "--summary=\"#{escape_quotes options[:summary]}\""
-      cmd << "--description=\"#{escape_quotes options[:description]}\""
-      cmd << "--branch=#{options[:branch]}"
-      cmd << "--parent=#{options[:parent]}" if options[:parent]
-      cmd << "--target-groups=#{options[:groups]}" if options[:groups]
-      cmd << "--target-people=#{options[:people]}" if options[:people]
-      cmd << "--server=\"#{options[:server]}\"" if options[:server] and not options[:server].empty?
-      cmd << "--open" if options[:open_browser]
-
-      cmd = cmd.join(" ")
-      TextMate::Process.run(cmd) do |out|
-        puts out
+      if opts[:repository_path].empty?
+        puts "<p>No repository ID or path found, please use git config --add reviewboard.repository_id|reviewboard.repository_path &lt;ID|path&gt;"
+        return
+      else
+        puts "<p>repository_path: '#{opts[:repository_path]}'</p>"
       end
     end
 
-    def escape_quotes(str)
-      str.gsub("\"", "\\\"")
+    response = create_new_request(opts)
+    if response["stat"] == "fail"
+      if response["err"]["code"] == 103
+        username = TextMate::UI.request_string(:title => "Login required", :prompt => "Enter username:")
+        password = TextMate::UI.request_secure_string(:title => "Login required", :prompt => "Enter password:")
+        login(username, password)
+        response = create_new_request(opts)
+      end
+    end
+    git.command("config", , "reviewboard.repository_id", response["review_request"]["repository"]["id"])
+    review_request_id = response["review_request"]["id"]
+    upload_diff(review_request_id, git.command("diff", "--no-color", "--no-prefix", upstream))
+
+    `open #{@reviewboard_url}/r/#{review_request_id}`
+  end
+
+  private
+    def create_new_request(data)
+      api_post("/api/json/reviewrequests/new/", data)
+    end
+
+    def login(username, password)
+      api_post("api/json/accounts/login/", { :username => username, :password => password })
+    end
+
+    def upload_diff(review_request, diff)
+      api_post("api/json/reviewrequests/%s/diff/new/" % review_request, )
+    end
+
+    def api_post(path, data, headers = {})
+      response = Net::HTTP.start(@reviewboard_url.host, @reviewboard_url.port) do |http|
+        headers["Cookie"] = @cookie if @cookie
+        req = Net::HTTP::Post.new(path, headers)
+        req.set_form_data(data)
+        http.request(req)
+      end
+      @cookie = response['set-cookie']
+      ActiveSupport::JSON.decode(response.body)
     end
 end
