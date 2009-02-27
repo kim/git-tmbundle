@@ -65,23 +65,21 @@ class ReviewBoardController < ApplicationController
     def api_post(path, params, files, headers = {})
       c = Curl::Easy.new("#{@reviewboard_url.host}:#{@reviewboard_url.port}")
       c.multipart_form_post = true
+      c.enable_cookies = true
+      c.cookiejar = "reviewboard.cookie" => "~"
+      c.headers = headers
 
       params = params.map do |name, value|
         Curl::PostField.content name, value
       end
       params += files.map do |filename, filedata|
-        Curl::PostField.file
+        Curl::PostField.file("diff", filename) do |f|
+          filedata
+        end
       end
-      c.http_post(
-        Curl::Post
-      )
-      response = Net::HTTP.start(@reviewboard_url.host, @reviewboard_url.port) do |http|
-        headers["Cookie"] = @cookie if @cookie
-        req = Net::HTTP::Post.new(path, headers)
-        req.set_form_data(data)
-        http.request(req)
-      end
-      @cookie = response['set-cookie']
-      ActiveSupport::JSON.decode(response.body)
+
+      c.http_post(params)
+
+      ActiveSupport::JSON.decode(c.body_str)
     end
 end
