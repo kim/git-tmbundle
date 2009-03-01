@@ -1,7 +1,9 @@
+require 'uri'
+require ENV['TM_SUPPORT_PATH'] + '/lib/tm/process.rb'
+require ENV['TM_SUPPORT_PATH'] + '/lib/ui'
+
 require 'rubygems'
-require 'curb'
-require 'activesupport'
-require ENV['TM_SUPPORT_PATH'] + "/lib/ui"
+require 'json'
 
 class ReviewBoardController < ApplicationController
 
@@ -10,13 +12,21 @@ class ReviewBoardController < ApplicationController
     current_branch = git.branch.current.name
 
     begin
-      @reviewboard_url = URI.parse git.command("config", "--get", "reviewboard.url").strip
+      url ||= git.command("config", "--get", "reviewboard.url").strip
+      raise URI::InvalidURIError, "Empty.." if url.empty?
+      @reviewboard_url = URI.parse(url)
     rescue URI::InvalidURIError
-      puts "<p>No reviewboad URL found, please use git config --add reviewboard.url &lt;URL&gt;</p>"
-      return
+      url = TextMate::UI.request_string(:title => "Which Reviewboard?", :prompt => "Reviewboard URL:").strip
+      unless url.empty?
+        git.command("config", "reviewboard.url", url)
+        retry
+      else
+        puts "<p>So you don't wanna tell me which URL?</p>"
+        return
+      end
     end
 
-    puts "<p>reviewboard url: #{@reviewboard_url}</p>"
+    # puts "<p>reviewboard url: #{@reviewboard_url}</p>"
 
     opts = {}
     opts[:repository_id] = git.command("config", "--get", "reviewboard.repository_id").strip
@@ -28,58 +38,68 @@ class ReviewBoardController < ApplicationController
       if opts[:repository_path].empty?
         puts "<p>No repository ID or path found, please use git config --add reviewboard.repository_id|reviewboard.repository_path &lt;ID|path&gt;"
         return
-      else
-        puts "<p>repository_path: '#{opts[:repository_path]}'</p>"
       end
     end
 
     response = create_new_request(opts)
-    if response["stat"] == "fail"
-      if response["err"]["code"] == 103
-        username = TextMate::UI.request_string(:title => "Login required", :prompt => "Enter username:")
-        password = TextMate::UI.request_secure_string(:title => "Login required", :prompt => "Enter password:")
-        login(username, password)
-        response = create_new_request(opts)
-      end
-    end
-    git.command("config", , "reviewboard.repository_id", response["review_request"]["repository"]["id"])
+
+    git.command("config", "reviewboard.repository_id", response["review_request"]["repository"]["id"])
     review_request_id = response["review_request"]["id"]
     upload_diff(review_request_id, git.command("diff", "--no-color", "--no-prefix", upstream))
+    raise "Huh?"
 
-    `open #{@reviewboard_url}/r/#{review_request_id}`
+    # `open #{@reviewboard_url}/r/#{review_request_id}`
+    puts "<a href=\"#{@reviewboard_url}/r/#{review_request_id}\">clickety</a>"
+    raise "WTF?"
   end
 
   private
     def create_new_request(data)
-      api_post("/api/json/reviewrequests/new/", data)
+      puts "creating new review request..."
+      response = api_post("api/json/reviewrequests/new/", data)
+      if response["stat"] == "fail"
+        if response["err"]["code"] == 103
+          username = TextMate::UI.request_string(:title => "Login required", :prompt => "Enter username:")
+          password = TextMate::UI.request_secure_string(:title => "Login required", :prompt => "Enter password:")
+          login(username, password)
+          response = create_new_request(opts)
+        else
+          raise "Unknown error: #{response["err"]}"
+        end
+      end
+      response
     end
 
     def login(username, password)
+      puts "logging in..."
       api_post("api/json/accounts/login/", { :username => username, :password => password })
     end
 
     def upload_diff(review_request, diff)
-      api_post("api/json/reviewrequests/%s/diff/new/" % review_request, )
+      puts "uploading diff.."
+      api_post("api/json/reviewrequests/#{review_request}/diff/new/", {:basedir => "/"}, { "path" => { :filename => "output.diff", :content => diff }})
     end
 
-    def api_post(path, params, files, headers = {})
-      c = Curl::Easy.new("#{@reviewboard_url.host}:#{@reviewboard_url.port}")
-      c.multipart_form_post = true
-      c.enable_cookies = true
-      c.cookiejar = "reviewboard.cookie" => "~"
-      c.headers = headers
+    def api_post(path, params, files = {}, headers = {})
 
-      params = params.map do |name, value|
-        Curl::PostField.content name, value
-      end
-      params += files.map do |filename, filedata|
-        Curl::PostField.file("diff", filename) do |f|
-          filedata
-        end
+      files.keys.each do |key|
+        File.open("/tmp/#{files[key][:filename]}", "wb") {|f| f.puts files[key][:content] }
       end
 
-      c.http_post(params)
+      cmd = "curl -v --cookie ~/.reviewboard.cookie --cookie-jar ~/.reviewboard.cookie"
+      params.each do |name, value|
+        name = name.to_s
+        value = value.to_s
+        cmd << " #{files.empty? ? "--data" : "--form"} \"#{URI.escape name}=#{URI.escape value}\" " unless value.empty?
+      end
 
-      ActiveSupport::JSON.decode(c.body_str)
+      files.keys.each {|key| cmd << " --form \"#{key}=@/tmp/#{files[key][:filename]}\" "}
+
+      cmd << "#{@reviewboard_url}/#{path}"
+
+      puts cmd
+      response = TextMate::Process.run(cmd)
+      p response
+      JSON.parse(response[0])
     end
 end
