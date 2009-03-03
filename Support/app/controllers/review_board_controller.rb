@@ -24,7 +24,7 @@ class ReviewBoardController < ApplicationController
       url ||= git.command("config", "--get", "reviewboard.url").strip
       raise URI::InvalidURIError, "Empty.." if url.empty?
       @reviewboard_url = URI.parse(url)
-      @reviewboard_url = @reviewboard_url.to_s.chomp!("/")
+      @reviewboard_url = @reviewboard_url.to_s.chomp("/")
     rescue URI::InvalidURIError
       url = ask_config( "reviewboard.url", "Which Reviewboard?", "Reviewboard URL:" ) || return
       retry
